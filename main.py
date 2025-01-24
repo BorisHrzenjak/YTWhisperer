@@ -5,7 +5,6 @@ from mistralai import Mistral
 import os
 from dotenv import load_dotenv
 import numpy as np
-from youtube_transcript_api.formatters import TextFormatter
 import time
 from dataclasses import dataclass
 from typing import List, Dict
@@ -185,15 +184,8 @@ if url:
                         chunks = [chunk.text for chunk in st.session_state.raw_chunks]
                         st.session_state.chunks = chunks
                         
-                        # Show success message and transcript preview
+                        # Show success message
                         st.success("✅ Transcript successfully loaded!")
-                        with st.expander("View Transcript Preview"):
-                            preview_chunk = st.session_state.raw_chunks[0]
-                            st.markdown(f"""
-                            **Preview of first chunk ({format_timestamp(preview_chunk.start_time)} - {format_timestamp(preview_chunk.end_time)}):**
-                            
-                            {preview_chunk.text[:500]}...
-                            """)
                         
                         st.info("🔄 Generating embeddings... This may take a few minutes.")
                         
@@ -345,7 +337,17 @@ if st.session_state.transcript:
                     
                     # Generate chat completion
                     messages = [
-                        {"role": "system", "content": f"You are an AI assistant analyzing a YouTube video. Use the following transcript excerpts with timestamps to answer the user's question. If referencing specific parts of the video, mention the timestamp:\n\n{context}"},
+                        {"role": "system", "content": """You are an AI assistant analyzing a YouTube video. Use the following transcript excerpts with timestamps to answer the user's question:
+
+""" + context + """
+
+Important instructions for your response:
+1. If referencing specific parts of the video, mention the timestamp
+2. At the end of your response, always include:
+   - A "Timestamp references:" section listing all timestamps you referenced in [MM:SS] format
+   - A "Confidence:" percentage (95% if very confident, lower if less certain)
+3. Format your response in a clear, concise manner
+4. If you're not confident about certain details, express that uncertainty"""},
                         {"role": "user", "content": prompt}
                     ]
                     
