@@ -18,13 +18,39 @@ class TranscriptChunk:
 # Load environment variables
 load_dotenv()
 
-# Initialize Mistral client
-api_key = os.environ.get("MISTRAL_API_KEY")
-if not api_key:
-    st.error("MISTRAL_API_KEY not set. Please set the environment variable.")
-    st.stop()
+# Initialize session state and results placeholder
+if "transcript" not in st.session_state:
+    st.session_state.transcript = None
+if "video_info" not in st.session_state:
+    st.session_state.video_info = None
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+if "chunks" not in st.session_state:
+    st.session_state.chunks = []
+if "chunk_embeddings" not in st.session_state:
+    st.session_state.chunk_embeddings = []
+if "raw_chunks" not in st.session_state:
+    st.session_state.raw_chunks = []
+if "language" not in st.session_state:
+    st.session_state.language = "en"
+if "results_placeholder" not in st.session_state:
+    st.session_state.results_placeholder = st.empty()
+if "current_video_id" not in st.session_state:
+    st.session_state.current_video_id = None
+if "mistral_api_key" not in st.session_state:
+    st.session_state.mistral_api_key = os.environ.get("MISTRAL_API_KEY", "")
 
-client = Mistral(api_key=api_key)
+# Create a reference to the placeholder
+results_placeholder = st.session_state.results_placeholder
+
+# Initialize Mistral client with the current API key
+def init_mistral_client():
+    api_key = st.session_state.mistral_api_key
+    if not api_key:
+        return None
+    return Mistral(api_key=api_key)
+
+client = init_mistral_client()
 
 # Translations dictionary
 translations = {
@@ -70,29 +96,6 @@ translations = {
 
 def get_text(key):
     return translations[st.session_state.language][key]
-
-# Initialize session state and results placeholder
-if "transcript" not in st.session_state:
-    st.session_state.transcript = None
-if "video_info" not in st.session_state:
-    st.session_state.video_info = None
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
-if "chunks" not in st.session_state:
-    st.session_state.chunks = []
-if "chunk_embeddings" not in st.session_state:
-    st.session_state.chunk_embeddings = []
-if "raw_chunks" not in st.session_state:
-    st.session_state.raw_chunks = []
-if "language" not in st.session_state:
-    st.session_state.language = "en"
-if "results_placeholder" not in st.session_state:
-    st.session_state.results_placeholder = st.empty()
-if "current_video_id" not in st.session_state:
-    st.session_state.current_video_id = None
-
-# Create a reference to the placeholder
-results_placeholder = st.session_state.results_placeholder
 
 # Helper functions
 def extract_video_id(url):
@@ -291,6 +294,26 @@ with st.sidebar:
     
     st.title(get_text("controls"))
     st.divider()
+
+    # Settings expander
+    with st.expander("⚙️ Settings"):
+        # API Key input
+        api_key = st.text_input(
+            "Mistral API Key",
+            value=st.session_state.mistral_api_key,
+            type="password",
+            help="Enter your Mistral API key. Get one at https://console.mistral.ai/",
+        )
+        
+        if api_key != st.session_state.mistral_api_key:
+            st.session_state.mistral_api_key = api_key
+            client = init_mistral_client()
+            st.rerun()
+
+    # Show warning if no API key is set
+    if not st.session_state.mistral_api_key:
+        st.warning("Please enter your Mistral API key in Settings ⚙️")
+        st.stop()
 
     # Always show buttons, but disable them if no transcript
     if st.button(get_text("generate_summary"), 
