@@ -88,6 +88,8 @@ if "language" not in st.session_state:
     st.session_state.language = "en"
 if "results_placeholder" not in st.session_state:
     st.session_state.results_placeholder = st.empty()
+if "current_video_id" not in st.session_state:
+    st.session_state.current_video_id = None
 
 # Create a reference to the placeholder
 results_placeholder = st.session_state.results_placeholder
@@ -223,42 +225,45 @@ if url:
                 chunks = [chunk.text for chunk in st.session_state.raw_chunks]
                 st.session_state.chunks = chunks
                 
-                st.info(get_text("generating_embeddings"))
-                
-                # Generate embeddings for chunks in batches
-                st.session_state.chunk_embeddings = []
-                chunk_batches = batch_list(chunks, batch_size=4)  
-                
-                progress_bar = st.progress(0)
-                progress_text = st.empty()
-                
-                for batch_idx, batch in enumerate(chunk_batches):
-                    try:
-                        progress_text.text(get_text("processing_batch").format(batch_idx + 1, len(chunk_batches)))
-                        embeddings = get_embeddings_with_retry(client, batch)
-                        if embeddings:
-                            st.session_state.chunk_embeddings.extend(embeddings)
-                        
-                        # Update progress
-                        progress = (batch_idx + 1) / len(chunk_batches)
-                        progress_bar.progress(progress)
-                        
-                        # Add longer delay between batches
-                        if batch_idx < len(chunk_batches) - 1:
-                            time.sleep(3)  # 3 seconds delay between batches
+                # Only generate embeddings if this is a new video
+                if video_id != st.session_state.current_video_id:
+                    st.info(get_text("generating_embeddings"))
+                    
+                    # Generate embeddings for chunks in batches
+                    st.session_state.chunk_embeddings = []
+                    chunk_batches = batch_list(chunks, batch_size=4)  
+                    
+                    progress_bar = st.progress(0)
+                    progress_text = st.empty()
+                    
+                    for batch_idx, batch in enumerate(chunk_batches):
+                        try:
+                            progress_text.text(get_text("processing_batch").format(batch_idx + 1, len(chunk_batches)))
+                            embeddings = get_embeddings_with_retry(client, batch)
+                            if embeddings:
+                                st.session_state.chunk_embeddings.extend(embeddings)
                             
-                    except Exception as e:
-                        st.error(f"Error generating embeddings for batch {batch_idx + 1}: {str(e)}")
-                        if "rate limit" in str(e).lower():
-                            st.warning("Rate limit hit. Waiting 10 seconds before continuing...")
-                            time.sleep(10)  # Longer wait on rate limit
-                        continue
-                
-                progress_bar.empty()
-                progress_text.empty()
-                
-                st.success(get_text("embeddings_done"))
-                
+                            # Update progress
+                            progress = (batch_idx + 1) / len(chunk_batches)
+                            progress_bar.progress(progress)
+                            
+                            # Add longer delay between batches
+                            if batch_idx < len(chunk_batches) - 1:
+                                time.sleep(3)  # 3 seconds delay between batches
+                                
+                        except Exception as e:
+                            st.error(f"Error generating embeddings for batch {batch_idx + 1}: {str(e)}")
+                            if "rate limit" in str(e).lower():
+                                st.warning("Rate limit hit. Waiting 10 seconds before continuing...")
+                                time.sleep(10)  # Longer wait on rate limit
+                            continue
+                    
+                    progress_bar.empty()
+                    progress_text.empty()
+                    
+                    st.success(get_text("embeddings_done"))
+                    # Store the current video ID
+                    st.session_state.current_video_id = video_id
         except Exception as e:
             st.error(f"Error loading transcript: {str(e)}")
     else:
