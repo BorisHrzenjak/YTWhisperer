@@ -8,6 +8,8 @@ import numpy as np
 import time
 from dataclasses import dataclass
 from typing import List, Dict
+import hashlib
+from datetime import datetime, timedelta
 
 @dataclass
 class TranscriptChunk:
@@ -17,6 +19,29 @@ class TranscriptChunk:
 
 # Load environment variables
 load_dotenv()
+
+# Security configurations
+if "api_call_count" not in st.session_state:
+    st.session_state.api_call_count = 0
+if "last_api_call_reset" not in st.session_state:
+    st.session_state.last_api_call_reset = datetime.now()
+if "api_call_limit" not in st.session_state:
+    st.session_state.api_call_limit = 100  # Adjust based on your needs
+
+# Rate limiting function
+def check_rate_limit():
+    # Reset counter every hour
+    if datetime.now() - st.session_state.last_api_call_reset > timedelta(hours=1):
+        st.session_state.api_call_count = 0
+        st.session_state.last_api_call_reset = datetime.now()
+    
+    if st.session_state.api_call_count >= st.session_state.api_call_limit:
+        remaining_time = st.session_state.last_api_call_reset + timedelta(hours=1) - datetime.now()
+        st.error(f"Rate limit exceeded. Please try again in {remaining_time.seconds // 60} minutes.")
+        return False
+    
+    st.session_state.api_call_count += 1
+    return True
 
 # Initialize session state and results placeholder
 if "transcript" not in st.session_state:
@@ -48,9 +73,26 @@ def init_mistral_client():
     api_key = st.session_state.mistral_api_key
     if not api_key:
         return None
-    return Mistral(api_key=api_key)
+    
+    # Basic API key validation
+    if not re.match(r'^[A-Za-z0-9_-]+$', api_key):
+        st.error("Invalid API key format")
+        return None
+    
+    try:
+        client = Mistral(api_key=api_key)
+        return client
+    except Exception as e:
+        st.error(f"Error initializing Mistral client: {str(e)}")
+        return None
 
 client = init_mistral_client()
+
+# Secure the API key display in session state
+def secure_api_key(key):
+    if not key:
+        return ""
+    return f"{key[:4]}...{key[-4:]}"
 
 # Translations dictionary
 translations = {
@@ -297,18 +339,41 @@ with st.sidebar:
 
     # Settings expander
     with st.expander("⚙️ Settings"):
-        # API Key input
+        st.markdown("""
+        ### API Key Configuration
+        You can set your Mistral API key in two ways:
+        1. In the `.env` file using `MISTRAL_API_KEY=your_key`
+        2. Directly in this UI (will override .env for this session)
+        """)
+        
+        # API Key input with secure display
+        current_key_display = secure_api_key(st.session_state.mistral_api_key)
+        source = "from .env" if st.session_state.mistral_api_key == os.environ.get("MISTRAL_API_KEY", "") else "from UI"
+        st.write(f"Current API Key: {current_key_display} ({source})")
+        
         api_key = st.text_input(
             "Mistral API Key",
-            value=st.session_state.mistral_api_key,
+            value="",
             type="password",
             help="Enter your Mistral API key. Get one at https://console.mistral.ai/",
         )
         
-        if api_key != st.session_state.mistral_api_key:
-            st.session_state.mistral_api_key = api_key
-            client = init_mistral_client()
-            st.rerun()
+        if api_key:
+            if not re.match(r'^[A-Za-z0-9_-]+$', api_key):
+                st.error("Invalid API key format")
+            else:
+                st.session_state.mistral_api_key = api_key
+                client = init_mistral_client()
+                st.rerun()
+
+        # Display rate limit information
+        st.write("---")
+        st.write("Rate Limit Status:")
+        calls_remaining = st.session_state.api_call_limit - st.session_state.api_call_count
+        st.write(f"API calls remaining: {calls_remaining}")
+        if st.session_state.api_call_count > 0:
+            reset_time = st.session_state.last_api_call_reset + timedelta(hours=1)
+            st.write(f"Resets at: {reset_time.strftime('%H:%M:%S')}")
 
     # Show warning if no API key is set
     if not st.session_state.mistral_api_key:
@@ -319,6 +384,9 @@ with st.sidebar:
     if st.button(get_text("generate_summary"), 
                 use_container_width=True, 
                 disabled=not st.session_state.transcript):
+        if not check_rate_limit():
+            st.stop()
+            
         with st.spinner("Generating summary..."):
             try:
                 messages = [
@@ -351,6 +419,9 @@ with st.sidebar:
     if st.button(get_text("show_metadata"), 
                 use_container_width=True, 
                 disabled=not st.session_state.transcript):
+        if not check_rate_limit():
+            st.stop()
+            
         with st.spinner("Extracting metadata..."):
             try:
                 messages = [
@@ -416,6 +487,9 @@ if st.session_state.transcript:
             st.markdown(prompt)
             
         with st.chat_message("assistant"):
+            if not check_rate_limit():
+                st.stop()
+                
             with st.spinner("Thinking..."):
                 try:
                     # Get relevant context using embeddings
