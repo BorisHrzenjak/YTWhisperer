@@ -27,6 +27,14 @@ if "last_api_call_reset" not in st.session_state:
 if "api_call_limit" not in st.session_state:
     st.session_state.api_call_limit = 100  # Adjust based on your needs
 
+# Get Mistral API key from environment or secrets
+def get_mistral_api_key():
+    # Try to get from Streamlit secrets first (for cloud deployment)
+    if hasattr(st.secrets, "MISTRAL_API_KEY"):
+        return st.secrets.MISTRAL_API_KEY
+    # Fallback to environment variable (for local development)
+    return os.environ.get("MISTRAL_API_KEY", "")
+
 # Rate limiting function
 def check_rate_limit():
     # Reset counter every hour
@@ -62,7 +70,7 @@ if "results_placeholder" not in st.session_state:
 if "current_video_id" not in st.session_state:
     st.session_state.current_video_id = None
 if "mistral_api_key" not in st.session_state:
-    st.session_state.mistral_api_key = os.environ.get("MISTRAL_API_KEY", "")
+    st.session_state.mistral_api_key = get_mistral_api_key()
 
 # Create a reference to the placeholder
 results_placeholder = st.session_state.results_placeholder
