@@ -9,6 +9,15 @@ import time
 from dataclasses import dataclass
 from typing import List, Dict
 from datetime import datetime, timedelta
+from pathlib import Path
+
+# Get the absolute path to the assets directory
+ASSETS_DIR = Path(__file__).parent / "assets"
+if not ASSETS_DIR.exists():
+    ASSETS_DIR.mkdir(exist_ok=True)
+
+# Logo path handling
+LOGO_PATH = ASSETS_DIR / "ytwhisperer-logo.png"
 
 @dataclass
 class TranscriptChunk:
@@ -359,7 +368,10 @@ with st.sidebar:
     # Add logo at the top of the sidebar
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        st.image("ytwhisperer-logo.png", width=150)
+        try:
+            st.image(str(LOGO_PATH), width=150)
+        except Exception:
+            st.warning("Logo not found. Please check assets folder.")
     st.divider()
     
     # Language selection in a smaller format
