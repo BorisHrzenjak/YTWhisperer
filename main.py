@@ -409,6 +409,11 @@ with st.sidebar:
             
         with st.spinner("Generating summary..."):
             try:
+                client = get_or_create_client()
+                if not client:
+                    st.error("Failed to initialize Mistral client. Please check your API key.")
+                    st.stop()
+                    
                 messages = [
                     {"role": "system", "content": """You are an AI assistant that creates clear, well-structured summaries of YouTube videos.
                     Create a summary with these sections:
@@ -422,7 +427,6 @@ with st.sidebar:
                     {"role": "user", "content": st.session_state.transcript}
                 ]
                 
-                client = get_or_create_client()
                 response = client.chat.complete(
                     model="mistral-large-latest",
                     messages=messages,
@@ -445,6 +449,11 @@ with st.sidebar:
             
         with st.spinner("Extracting metadata..."):
             try:
+                client = get_or_create_client()
+                if not client:
+                    st.error("Failed to initialize Mistral client. Please check your API key.")
+                    st.stop()
+                    
                 messages = [
                     {"role": "system", "content": """Extract and organize key metadata from this video transcript.
                     Include:
@@ -458,7 +467,6 @@ with st.sidebar:
                     {"role": "user", "content": st.session_state.transcript}
                 ]
                 
-                client = get_or_create_client()
                 response = client.chat.complete(
                     model="mistral-tiny",  # Using the more reliable model
                     messages=messages,
