@@ -107,7 +107,7 @@ def secure_api_key(key):
 # Translations dictionary
 translations = {
     "en": {
-        "title": "YouTube Video Analyzer",
+        "title": "YTWhisperer",
         "controls": "Controls",
         "enter_url": "Enter YouTube URL:",
         "generate_summary": "Generate Summary",
