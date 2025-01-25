@@ -93,8 +93,6 @@ def init_mistral_client():
         st.error(f"Error initializing Mistral client: {str(e)}")
         return None
 
-client = init_mistral_client()
-
 # Secure the API key display in session state
 def secure_api_key(key):
     if not key:
@@ -281,6 +279,12 @@ if url:
                 if video_id != st.session_state.current_video_id:
                     st.info(get_text("generating_embeddings"))
                     
+                    # Initialize client here when needed
+                    client = init_mistral_client()
+                    if not client:
+                        st.error("Failed to initialize Mistral client. Please check your API key.")
+                        st.stop()
+                    
                     # Generate embeddings for chunks in batches
                     st.session_state.chunk_embeddings = []
                     chunk_batches = batch_list(chunks, batch_size=4)  
@@ -292,8 +296,12 @@ if url:
                         try:
                             progress_text.text(get_text("processing_batch").format(batch_idx + 1, len(chunk_batches)))
                             embeddings = get_embeddings_with_retry(client, batch)
-                            if embeddings:
-                                st.session_state.chunk_embeddings.extend(embeddings)
+                            
+                            if not embeddings:
+                                st.error(f"Failed to generate embeddings for batch {batch_idx + 1}")
+                                continue
+                                
+                            st.session_state.chunk_embeddings.extend(embeddings)
                             
                             # Update progress
                             progress = (batch_idx + 1) / len(chunk_batches)
