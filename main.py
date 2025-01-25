@@ -71,9 +71,14 @@ if "current_video_id" not in st.session_state:
     st.session_state.current_video_id = None
 if "mistral_api_key" not in st.session_state:
     st.session_state.mistral_api_key = get_mistral_api_key()
+if "mistral_client" not in st.session_state:
+    st.session_state.mistral_client = None
 
-# Create a reference to the placeholder
-results_placeholder = st.session_state.results_placeholder
+# Initialize or update client if needed
+def get_or_create_client():
+    if st.session_state.mistral_client is None:
+        st.session_state.mistral_client = init_mistral_client()
+    return st.session_state.mistral_client
 
 # Initialize Mistral client with the current API key
 def init_mistral_client():
@@ -280,7 +285,7 @@ if url:
                     st.info(get_text("generating_embeddings"))
                     
                     # Initialize client here when needed
-                    client = init_mistral_client()
+                    client = get_or_create_client()
                     if not client:
                         st.error("Failed to initialize Mistral client. Please check your API key.")
                         st.stop()
@@ -378,7 +383,7 @@ with st.sidebar:
                 st.error("Invalid API key format")
             else:
                 st.session_state.mistral_api_key = api_key
-                client = init_mistral_client()
+                client = get_or_create_client()
                 st.rerun()
 
         # Display rate limit information
@@ -417,6 +422,7 @@ with st.sidebar:
                     {"role": "user", "content": st.session_state.transcript}
                 ]
                 
+                client = get_or_create_client()
                 response = client.chat.complete(
                     model="mistral-large-latest",
                     messages=messages,
@@ -452,6 +458,7 @@ with st.sidebar:
                     {"role": "user", "content": st.session_state.transcript}
                 ]
                 
+                client = get_or_create_client()
                 response = client.chat.complete(
                     model="mistral-tiny",  # Using the more reliable model
                     messages=messages,
@@ -508,6 +515,7 @@ if st.session_state.transcript:
             with st.spinner("Thinking..."):
                 try:
                     # Get relevant context using embeddings
+                    client = get_or_create_client()
                     response = client.embeddings.create(
                         model="mistral-embed",
                         inputs=[prompt]
