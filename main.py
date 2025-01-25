@@ -35,6 +35,26 @@ def get_mistral_api_key():
     # Fallback to environment variable (for local development)
     return os.environ.get("MISTRAL_API_KEY", "")
 
+def init_mistral_client():
+    # Get API key from session state (UI input) or from secrets/env
+    api_key = st.session_state.get("mistral_api_key_input") or get_mistral_api_key()
+    if not api_key:
+        return None
+    
+    # Basic API key validation - less restrictive pattern
+    if not isinstance(api_key, str) or len(api_key.strip()) < 32:
+        st.error("Invalid API key format. API key should be at least 32 characters long.")
+        return None
+    
+    try:
+        client = Mistral(api_key=api_key.strip())
+        # Store the working API key in session state
+        st.session_state.mistral_api_key = api_key.strip()
+        return client
+    except Exception as e:
+        st.error(f"Error initializing Mistral client: {str(e)}")
+        return None
+
 # Rate limiting function
 def check_rate_limit():
     # Reset counter every hour
@@ -71,32 +91,16 @@ if "current_video_id" not in st.session_state:
     st.session_state.current_video_id = None
 if "mistral_api_key" not in st.session_state:
     st.session_state.mistral_api_key = get_mistral_api_key()
+if "mistral_api_key_input" not in st.session_state:
+    st.session_state.mistral_api_key_input = ""
 if "mistral_client" not in st.session_state:
-    st.session_state.mistral_client = None
+    st.session_state.mistral_client = init_mistral_client()
 
 # Initialize or update client if needed
 def get_or_create_client():
     if st.session_state.mistral_client is None:
         st.session_state.mistral_client = init_mistral_client()
     return st.session_state.mistral_client
-
-# Initialize Mistral client with the current API key
-def init_mistral_client():
-    api_key = st.session_state.mistral_api_key
-    if not api_key:
-        return None
-    
-    # Basic API key validation
-    if not re.match(r'^[A-Za-z0-9_-]+$', api_key):
-        st.error("Invalid API key format")
-        return None
-    
-    try:
-        client = Mistral(api_key=api_key)
-        return client
-    except Exception as e:
-        st.error(f"Error initializing Mistral client: {str(e)}")
-        return None
 
 # Secure the API key display in session state
 def secure_api_key(key):
@@ -151,21 +155,31 @@ def get_text(key):
 
 # Helper functions
 def extract_video_id(url):
-    # Extract video ID from YouTube URL
-    video_id_match = re.search(r'(?:v=|\/)([0-9A-Za-z_-]{11}).*', url)
-    if video_id_match:
-        return video_id_match.group(1)
+    # List of possible YouTube URL patterns
+    patterns = [
+        r'(?:v=|\/)([0-9A-Za-z_-]{11}).*',  # Standard YouTube URLs
+        r'(?:youtu\.be\/)([0-9A-Za-z_-]{11})',  # Shortened youtu.be URLs
+        r'(?:embed\/)([0-9A-Za-z_-]{11})',  # Embed URLs
+        r'^([0-9A-Za-z_-]{11})$'  # Direct video ID
+    ]
+    
+    # Try each pattern
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
     return None
 
 def get_video_info(url):
     try:
         video_id = extract_video_id(url)
         if not video_id:
-            raise ValueError("Invalid YouTube URL")
+            st.error(get_text("invalid_url"))
+            return None
             
+        # Don't fetch thumbnail URL to avoid tracking
         return {
-            "id": video_id,
-            "thumbnail": f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg",
+            "id": video_id
         }
     except Exception as e:
         st.error(f"Error getting video info: {e}")
@@ -267,8 +281,11 @@ if url:
         # Create columns to constrain video width
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
-            # Display video player
-            st.video(f"https://www.youtube.com/watch?v={video_id}")
+            # Most basic embed possible
+            st.markdown(
+                f'<iframe src="https://www.youtube-nocookie.com/embed/{video_id}" width="100%" height="315" frameborder="0"></iframe>',
+                unsafe_allow_html=True
+            )
         
         try:
             transcript = YouTubeTranscriptApi.get_transcript(video_id)
@@ -377,19 +394,17 @@ with st.sidebar:
         source = "from .env" if st.session_state.mistral_api_key == os.environ.get("MISTRAL_API_KEY", "") else "from UI"
         st.write(f"Current API Key: {current_key_display} ({source})")
         
-        api_key = st.text_input(
+        api_key_input = st.text_input(
             "Mistral API Key",
-            value="",
+            value=st.session_state.mistral_api_key_input,
             type="password",
-            help="Enter your Mistral API key. Get one at https://console.mistral.ai/",
+            help="Enter your Mistral API key here if not using secrets.toml"
         )
-        
-        if api_key:
-            if not re.match(r'^[A-Za-z0-9_-]+$', api_key):
-                st.error("Invalid API key format")
-            else:
-                st.session_state.mistral_api_key = api_key
-                client = get_or_create_client()
+        if api_key_input != st.session_state.mistral_api_key_input:
+            st.session_state.mistral_api_key_input = api_key_input
+            # Initialize client with new key
+            if init_mistral_client():
+                st.success("API key updated successfully!")
                 st.rerun()
 
         # Display rate limit information
