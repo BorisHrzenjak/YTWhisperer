@@ -126,7 +126,7 @@ translations = {
         "invalid_url": "Invalid YouTube URL"
     },
     "hr": {
-        "title": "YouTube Video Analizator",
+        "title": "YTWhisperer",
         "controls": "Kontrole",
         "enter_url": "Unesite YouTube URL:",
         "generate_summary": "Generiraj Sažetak",
@@ -339,6 +339,12 @@ results_placeholder = st.empty()
 
 # Sidebar
 with st.sidebar:
+    # Add logo at the top of the sidebar
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.image("ytwhisperer-logo.png", width=150)
+    st.divider()
+    
     # Language selection in a smaller format
     cols = st.columns([1, 1, 1])  # Three equal columns
     with cols[0]:
