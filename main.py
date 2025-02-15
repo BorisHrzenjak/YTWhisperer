@@ -1,16 +1,29 @@
 import streamlit as st
-from youtube_transcript_api import YouTubeTranscriptApi
+from pathlib import Path
+from datetime import datetime, timedelta
 import re
-from mistralai import Mistral
 import os
 from dotenv import load_dotenv
+from typing import List, Dict, Any
+
+# API clients
+from mistralai.client import MistralClient as Mistral
+from groq import Groq
+
+# YouTube transcript API
+from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api.formatters import TextFormatter
+from youtube_transcript_api._errors import (
+    NoTranscriptFound,
+    TranscriptsDisabled,
+    VideoUnavailable,
+    TooManyRequests
+)
+
 import numpy as np
 import time
 from dataclasses import dataclass
-from typing import List, Dict
-from datetime import datetime, timedelta
-from pathlib import Path
-from groq import Groq
+from mistralai import Mistral
 import yt_dlp
 import tempfile
 import logging
@@ -169,7 +182,7 @@ def secure_api_key(key):
 translations = {
     "en": {
         "title": "YTWhisperer",
-        "controls": "Controls",
+        "controls": "Settings",
         "enter_url": "Enter YouTube URL:",
         "generate_summary": "Generate Summary",
         "show_transcript": "Show Transcript",
@@ -182,11 +195,12 @@ translations = {
         "generating_embeddings": "🔄 Generating embeddings... This may take a few minutes.",
         "processing_batch": "Processing batch {} of {}...",
         "embeddings_done": "✅ Embeddings successfully generated! You can now ask questions about the video.",
-        "invalid_url": "Invalid YouTube URL"
+        "invalid_url": "Invalid YouTube URL",
+        "no_transcript_using_whisper": "No transcript found. Using Whisper for transcription..."
     },
     "hr": {
         "title": "YTWhisperer",
-        "controls": "Kontrole",
+        "controls": "Postavke",
         "enter_url": "Unesite YouTube URL:",
         "generate_summary": "Generiraj Sažetak",
         "show_transcript": "Prikaži Transkript",
@@ -199,7 +213,8 @@ translations = {
         "generating_embeddings": "🔄 Generiranje embeddings-a... Ovo može potrajati nekoliko minuta.",
         "processing_batch": "Obrađujem grupu {} od {}...",
         "embeddings_done": "✅ Embeddings uspješno generirani! Sada možete postavljati pitanja o videu.",
-        "invalid_url": "Nevažeći YouTube URL"
+        "invalid_url": "Nevažeći YouTube URL",
+        "no_transcript_using_whisper": "Nema transkripta. Koristim Whisper za transkripciju..."
     }
 }
 
@@ -518,6 +533,53 @@ def transcribe_with_whisper(audio_file_path: str, language: str = None) -> List[
     
     return None
 
+def get_transcript(video_id):
+    """Get transcript for a YouTube video."""
+    try:
+        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        current_language = st.session_state.language
+        
+        # First try to get manual transcripts in current language
+        try:
+            transcript = transcript_list.find_manually_created_transcript([current_language])
+            return transcript.fetch()
+        except NoTranscriptFound:
+            # Then try auto-generated transcripts in current language
+            try:
+                transcript = transcript_list.find_generated_transcript([current_language])
+                return transcript.fetch()
+            except NoTranscriptFound:
+                # If not found in current language, try English as fallback
+                if current_language != "en":
+                    try:
+                        # Try manual English transcript
+                        transcript = transcript_list.find_manually_created_transcript(["en"])
+                        return transcript.translate(current_language).fetch()
+                    except NoTranscriptFound:
+                        try:
+                            # Try auto-generated English transcript
+                            transcript = transcript_list.find_generated_transcript(["en"])
+                            return transcript.translate(current_language).fetch()
+                        except NoTranscriptFound:
+                            pass
+                
+                # If still no transcript found, try Whisper
+                st.warning(get_text("no_transcript_using_whisper"))
+                return transcribe_with_whisper(video_id)
+            
+    except TranscriptsDisabled:
+        st.error("Transcripts are disabled for this video. Trying Whisper...")
+        return transcribe_with_whisper(video_id)
+    except VideoUnavailable:
+        st.error("Video is unavailable. Please check the URL.")
+        return None
+    except TooManyRequests:
+        st.error("Too many requests. Please try again later.")
+        return None
+    except Exception as e:
+        st.error(f"Error getting transcript: {str(e)}")
+        return None
+
 # Main content area
 st.title(get_text("title"))
 
@@ -538,7 +600,7 @@ if video_url:
         
         try:
             # Try to get YouTube transcript first
-            transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=[st.session_state.language])
+            transcript_list = get_transcript(video_id)
             st.session_state.using_whisper = False
         except Exception:
             st.warning("YouTube transcript not available. Attempting to use Whisper transcription...")
@@ -646,16 +708,89 @@ with st.sidebar:
 
     st.divider()
     
-    # Controls Section
-    st.title(get_text("controls"))
+    # Show warning if no API key is set
+    if not st.session_state.mistral_api_key:
+        st.warning("Please enter your Mistral API key in Settings ⚙️")
+        st.stop()
+        
+    # Action Buttons outside of settings
+    if st.button(get_text("generate_summary"), 
+                use_container_width=True, 
+                disabled=not st.session_state.transcript):
+        if not check_rate_limit():
+            st.stop()
+        
+        with st.spinner("Generating summary..."):
+            try:
+                client = get_or_create_client()
+                if not client:
+                    st.error("Failed to initialize Mistral client. Please check your API key.")
+                    st.stop()
+                
+                # Define language-specific templates
+                templates = {
+                    'hr': '''Kreiraj sažetak na hrvatskom jeziku sa sljedećim sekcijama:
+                    
+                    1. Kratki Pregled (2-3 rečenice)
+                    2. Ključne Točke (natuknice)
+                    3. Glavni Zaključci (2-3 ključna zaključka)
+                    
+                    Formatiraj odgovor u Markdown formatu za bolju čitljivost.''',
+                    'en': '''Create a summary in English with these sections:
+                    
+                    1. Brief Overview (2-3 sentences)
+                    2. Key Points (bullet points)
+                    3. Main Takeaways (2-3 key conclusions)
+                    
+                    Format the response in Markdown for better readability.'''
+                }
+                
+                messages = [
+                    {"role": "system", "content": f"You are an AI assistant that creates clear, well-structured summaries of YouTube videos.\n{templates[st.session_state.language]}"},
+                    {"role": "user", "content": f"Generate a summary in {st.session_state.language} language for this transcript: {st.session_state.transcript}"}
+                ]
+                
+                response = client.chat.complete(
+                    model="mistral-large-latest",
+                    messages=messages,
+                    temperature=0.7,
+                    max_tokens=1000
+                )
+                with results_placeholder.container():
+                    st.header(f" 📝 {get_text('video_summary')}")
+                    st.write(response.choices[0].message.content)
+            except Exception as e:
+                st.error(f"Error generating summary: {str(e)}")
+                if "rate limit" in str(e).lower():
+                    st.warning("Rate limit hit. Please wait a moment and try again.")
     
-    # Settings expander with all configurations
-    with st.expander("⚙️ Settings", expanded=True):
+    if st.button(get_text("show_transcript"), 
+                use_container_width=True, 
+                disabled=not st.session_state.transcript):
+        with results_placeholder.container():
+            st.header(f" 📄 {get_text('full_transcript')}")
+            formatted_transcript = ""
+            for chunk in st.session_state.raw_chunks:
+                timestamp = f"**`[{format_timestamp(chunk.start_time)} - {format_timestamp(chunk.end_time)}]`**"
+                formatted_transcript += f"{timestamp}\n\n{chunk.text}\n\n---\n\n"
+            st.markdown(formatted_transcript)
+    
+    if st.button(get_text("clear_history"), 
+                use_container_width=True, 
+                disabled=not st.session_state.transcript):
+        st.session_state.chat_history = []
+        results_placeholder.empty()
+        st.rerun()
+    
+    st.divider()
+    
+    # Settings Section (formerly Controls)
+    with st.expander(" ⚙️ Settings", expanded=True):
         tab1, tab2, tab3 = st.tabs(["Language", "API Keys", "Help"])
         
         # Tab 1: Language Settings
         with tab1:
-            # Add custom CSS for language selector
+            # Custom CSS for language selector
             st.markdown("""
                 <style>
                 .lang-text {
@@ -688,11 +823,13 @@ with st.sidebar:
             
             # Center the toggle switch
             with col2:
+                previous_language = st.session_state.language
                 is_croatian = st.toggle(
                     "Language",
                     value=st.session_state.language == "hr",
                     help="Toggle between English and Croatian",
-                    label_visibility="collapsed"
+                    label_visibility="collapsed",
+                    key="language_toggle"
                 )
             
             # Display HR with active state
@@ -702,12 +839,12 @@ with st.sidebar:
                     unsafe_allow_html=True
                 )
             
-            # Update language based on toggle state
-            if is_croatian and st.session_state.language != "hr":
-                st.session_state.language = "hr"
-                st.rerun()
-            elif not is_croatian and st.session_state.language != "en":
-                st.session_state.language = "en"
+            # Update language based on toggle state, but preserve the session state
+            new_language = "hr" if is_croatian else "en"
+            if new_language != previous_language:
+                st.session_state.language = new_language
+                # Don't clear transcript or other important states
+                # Just rerun to update the UI text
                 st.rerun()
         
         # Tab 2: API Keys
@@ -782,72 +919,6 @@ with st.sidebar:
             """)
         
         st.divider()
-
-        # Show warning if no API key is set
-        if not st.session_state.mistral_api_key:
-            st.warning("Please enter your Mistral API key in Settings ⚙️")
-            st.stop()
-
-        # Action Buttons
-        if st.button(get_text("generate_summary"), 
-                    use_container_width=True, 
-                    disabled=not st.session_state.transcript):
-            if not check_rate_limit():
-                st.stop()
-                
-            with st.spinner("Generating summary..."):
-                try:
-                    client = get_or_create_client()
-                    if not client:
-                        st.error("Failed to initialize Mistral client. Please check your API key.")
-                        st.stop()
-                        
-                    messages = [
-                        {"role": "system", "content": """You are an AI assistant that creates clear, well-structured summaries of YouTube videos.
-                        Create a summary with these sections:
-                        
-                        1. Brief Overview (2-3 sentences)
-                        2. Key Points (bullet points)
-                        3. Main Takeaways (2-3 key conclusions)
-                        
-                        Format the response in Markdown for better readability.
-                        """},
-                        {"role": "user", "content": st.session_state.transcript}  # Using the joined text
-                    ]
-                    
-                    response = client.chat.complete(
-                        model="mistral-large-latest",
-                        messages=messages,
-                        temperature=0.7,
-                        max_tokens=1000
-                    )
-                    with results_placeholder.container():
-                        st.header(f"📝 {get_text('video_summary')}")
-                        st.write(response.choices[0].message.content)
-                except Exception as e:
-                    st.error(f"Error generating summary: {str(e)}")
-                    if "rate limit" in str(e).lower():
-                        st.warning("Rate limit hit. Please wait a moment and try again.")
-        
-        if st.button(get_text("show_transcript"), 
-                    use_container_width=True, 
-                    disabled=not st.session_state.transcript):
-            with results_placeholder.container():
-                st.header(f"📄 {get_text('full_transcript')}")
-                formatted_transcript = ""
-                for chunk in st.session_state.raw_chunks:
-                    # Format timestamp in a visually distinct way
-                    timestamp = f"**`[{format_timestamp(chunk.start_time)} - {format_timestamp(chunk.end_time)}]`**"
-                    # Add timestamp and text with proper spacing and formatting
-                    formatted_transcript += f"{timestamp}\n\n{chunk.text}\n\n---\n\n"
-                st.markdown(formatted_transcript)
-        
-        if st.button(get_text("clear_history"), 
-                    use_container_width=True, 
-                    disabled=not st.session_state.transcript):
-            st.session_state.chat_history = []
-            results_placeholder.empty()
-            st.rerun()
 
 # Chat interface in main area
 if st.session_state.transcript:
