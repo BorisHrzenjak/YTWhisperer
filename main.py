@@ -978,7 +978,7 @@ Important instructions for your response:
                     ]
                     
                     response = client.chat.complete(
-                        model="mistral-tiny",
+                        model="mistral-large-latest",
                         messages=messages,
                         temperature=0.7,
                         max_tokens=1000
