@@ -581,7 +581,6 @@ def get_transcript(video_id):
         return None
 
 # Main content area
-st.title(get_text("title"))
 
 # URL input in main area
 video_url = st.text_input(get_text("enter_url"))
