@@ -3,3 +3,7 @@ youtube_transcript_api
 mistralai
 python-dotenv
 numpy
+groq
+pytube
+yt-dlp
+simpleaudio
